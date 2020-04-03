@@ -48,7 +48,7 @@ int main(int argc, const char * argv[]) {
         std::cerr << "Usage: " << argv[0] << " <save.dbj>\n";
         return 1;
     } else if (std::string(argv[1]) == "--help" || std::string(argv[1]) == "-h" || std::string(argv[1]) == "-?") {
-        std::cout << "DashBot is a simple AI designed to beat Geometry Dash levels. This version works with Geometry Dash 2.11.\nUsage: " << argv[0] << " <level name|portal types> [save.dbj]\nType \"" << argv[0] << " list\" to list level names.\n";
+        std::cout << "DashBot is a simple AI designed to beat Geometry Dash levels. This version works with Geometry Dash 2.11.\nUsage: " << argv[0] << " <save.dbj>\n";
         return 0;
     }
     std::cout << "DashBot Player v3.0\nOffsets from Pizzabot-v4 by Pizzaroot\n";
