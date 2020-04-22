@@ -12,7 +12,7 @@
 #include <algorithm>
 #undef max
 
-#define ODDS (bestLastJump / bestFitness) / 25 + 0.0001
+#define ODDS ((bestLastJump == 0.0 ? (bestFitness / 2.0) : bestLastJump) / bestFitness) / 25.0 + 0.0001
 
 const std::unordered_map<std::string, std::vector<bool> > flyStatesForAllMaps = {
     {"StereoMadness", {false, true, false, true}},
@@ -147,6 +147,7 @@ int main(int argc, const char * argv[]) {
                 if (lastX > bestFitnessR) {
                     bestJumps = jumps;
                     bestLastJump = lastJump;
+                    bestFitnessR = 0;
                     if (saving) {
                         out.open(argv[2], std::ios_base::binary);
                         out.write((char*)&bestFitness, sizeof(double));
@@ -156,10 +157,9 @@ int main(int argc, const char * argv[]) {
                         out.put(0); out.put(0); out.put(0); out.put(0);
                         out.close();
                     }
-                }
+                } else std::cout << "not saving this one since it can be better\n";
                 failCount = 0;
-                bestFitnessR = 0;
-            } else if (bestJumps.size() - jumps.size() <= 10 && ++failCount >= 10 && bestJumps.size() > 0) {
+            } else if ((signed)bestJumps.size() - (signed)jumps.size() <= 10 && ++failCount >= 10 && bestJumps.size() > 0) {
                 if (jumps.size() == 0 && bestJumps.size() >= 5) {
                     std::cerr << "forgot how to play! stopping to prevent data loss\n";
                     return 3;
@@ -184,10 +184,10 @@ int main(int argc, const char * argv[]) {
             } else bestFitnessR = 0;
             jumps.clear();
             lastJump = 0;
-        } else if ((uint32_t)floor(xPos / 5) * 5 <= bestLastJump)
+        } else if ((uint32_t)floor(xPos / 5) * 5 <= bestLastJump) {
             if (bestJumps.find((uint32_t)floor(xPos / 5) * 5) != bestJumps.end() && jumps.find((uint32_t)floor(xPos / 5) * 5) == jumps.end())
                 shouldJump = true;
-        else if (xPos > lastX) {
+        } else if (xPos > lastX) {
             if (!randing) {
                 std::cout << "randing after " << bestLastJump << ", odds are " << (ODDS) * 100 << "%\n";
                 randing = true;
