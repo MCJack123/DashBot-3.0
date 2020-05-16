@@ -51,6 +51,23 @@ uint32_t oldFlyState = 0;
 int currentFlyNum = 0;
 bool isDown = false;
 
+void saveLevel(const char * argv[]) {
+    if (!saving) return;
+    bool loop = false;
+    do {
+        out.open(argv[2], std::ios_base::binary);
+        out.write((char*)&bestFitness, sizeof(double));
+        out.write((char*)&bestLastJump, sizeof(double));
+        out.write(argv[1], strlen(argv[1]) + 1);
+        for (uint32_t i : bestJumps) out.write((char*)&i, 4);
+        out.put(0); out.put(0); out.put(0); out.put(0);
+        long pos = out.tellp();
+        out.close();
+        // Rewrite the file if it gets corrupted
+        if (pos < sizeof(double) * 2 + strlen(argv[1]) + 1 + bestJumps.size() * 4 + 4) loop = true;
+    } while (loop);
+}
+
 int main(int argc, const char * argv[]) {
     if (argc < 2) {
         std::cerr << "Usage: " << argv[0] << " <level name|portal types> [save.dbj]\nType \"" << argv[0] << " list\" to list level names\n";
@@ -112,15 +129,7 @@ int main(int argc, const char * argv[]) {
             bestFitness = lastX;
             bestJumps = jumps;
             bestLastJump = lastJump;
-            if (saving) {
-                out.open(argv[2], std::ios_base::binary);
-                out.write((char*)&bestFitness, sizeof(double));
-                out.write((char*)&bestLastJump, sizeof(double));
-                out.write(argv[1], strlen(argv[1]) + 1);
-                for (uint32_t i : bestJumps) out.write((char*)&i, 4);
-                out.put(0); out.put(0); out.put(0); out.put(0);
-                out.close();
-            }
+            saveLevel(argv);
             return 0;
         }
         if (flyState != oldFlyState && xPos > lastX) {
@@ -133,7 +142,7 @@ int main(int argc, const char * argv[]) {
             }
         }
         if (xPos < lastX) {
-            std::cout << "dead (" << lastX << ") (" << (9 - failCount) << " tries until regression)\n";
+            std::cout << "dead (" << lastX << ") (";
             randing = false;
             oldFlyState = flyState;
             currentFlyNum = 0;
@@ -141,25 +150,21 @@ int main(int argc, const char * argv[]) {
                 mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
                 isDown = false;
             }
-            if (lastX > bestFitness) {
-                std::cout << "best fitness @ " << lastX << " vs. " << bestFitness << "\n";
+            if (lastX > bestFitness && (lastX > bestFitnessR || failCount < 9)) {
+                std::cout << (10 - failCount - (lastX <= bestFitnessR)) << " tries until regression)\n" << "best fitness @ " << lastX << " vs. " << bestFitness << "\n";
                 bestFitness = lastX;
                 if (lastX > bestFitnessR) {
                     bestJumps = jumps;
                     bestLastJump = lastJump;
                     bestFitnessR = 0;
-                    if (saving) {
-                        out.open(argv[2], std::ios_base::binary);
-                        out.write((char*)&bestFitness, sizeof(double));
-                        out.write((char*)&bestLastJump, sizeof(double));
-                        out.write(argv[1], strlen(argv[1]) + 1);
-                        for (uint32_t i : bestJumps) out.write((char*)&i, 4);
-                        out.put(0); out.put(0); out.put(0); out.put(0);
-                        out.close();
-                    }
-                } else std::cout << "not saving this one since it can be better\n";
-                failCount = 0;
+                    saveLevel(argv);
+                    failCount = 0;
+                } else {
+                    failCount++;
+                    std::cout << "not saving this one since it can be better\n";
+                }
             } else if ((signed)bestJumps.size() - (signed)jumps.size() <= 10 && ++failCount >= 10 && bestJumps.size() > 0) {
+                std::cout << (10 - failCount) << " tries until regression)\n";
                 if (jumps.size() == 0 && bestJumps.size() >= 5) {
                     std::cerr << "forgot how to play! stopping to prevent data loss\n";
                     return 3;
@@ -172,16 +177,11 @@ int main(int argc, const char * argv[]) {
                 bestFitnessR = bestFitness;
                 bestFitness = bestLastJump;
                 failCount = 0;
-                if (saving) {
-                    out.open(argv[2], std::ios_base::binary);
-                    out.write((char*)&bestFitness, sizeof(double));
-                    out.write((char*)&bestLastJump, sizeof(double));
-                    out.write(argv[1], strlen(argv[1]) + 1);
-                    for (uint32_t i : bestJumps) out.write((char*)&i, 4);
-                    out.put(0); out.put(0); out.put(0); out.put(0);
-                    out.close();
-                }
-            } else bestFitnessR = 0;
+                saveLevel(argv);
+            } else {
+                std::cout << (10 - failCount) << " tries until regression)\n";
+                //bestFitnessR = 0;
+            }
             jumps.clear();
             lastJump = 0;
         } else if ((uint32_t)floor(xPos / 5) * 5 <= bestLastJump) {
