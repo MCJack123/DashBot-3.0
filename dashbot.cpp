@@ -141,7 +141,7 @@ int main(int argc, const char * argv[]) {
                 isDown = false;
             }
         }
-        if (xPos < lastX) {
+        if (xPos < lastX && lastX - xPos > 10) {
             std::cout << "dead (" << lastX << ") (";
             randing = false;
             oldFlyState = flyState;
