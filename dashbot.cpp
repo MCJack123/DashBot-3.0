@@ -9,10 +9,12 @@
 #include <vector>
 #include <chrono>
 #include <string>
+#include <cstring>
 #include <algorithm>
 #undef max
 
-#define ODDS ((bestLastJump == 0.0 ? (bestFitness / 2.0) : bestLastJump) / bestFitness) / 25.0 + 0.0001
+double MAX_ODDS = 4.0;
+#define ODDS ((bestLastJump == 0.0 ? (bestFitness / 2.0) : bestLastJump) / bestFitness) / (100.0 / MAX_ODDS) + 0.0001
 
 const std::unordered_map<std::string, std::vector<bool> > flyStatesForAllMaps = {
     {"StereoMadness", {false, true, false, true}},
@@ -33,9 +35,33 @@ const std::unordered_map<std::string, std::vector<bool> > flyStatesForAllMaps = 
     {"HexagonForce", {false, true, false, false, true, false, false, false, true, false, true}},
     {"BlastProcessing", {false, true /*Wave*/, true, false, true, false, false, true, false, false, true, false}},
     {"TheoryOfEverything2", {false, true, false, false, false, false, true, false, true, false, true, true, false, true, false, false, true, false}},
-    {"GeometricalDominator", {false, true /*Robot?*/, true, true, false, true, true, false, false, true, false, false, true, true}},
+    {"GeometricalDominator", {false, true /*Robot*/, true, true, false, true, true, false, false, true, false, false, true, true}},
     //{"Deadlocked", {}},
-    // Fingerdash is currently impossible due to the hold jump rings
+    // Fingerdash is currently impossible (?) due to the hold jump rings, though it may work to have the cube part be mode 1 instead
+};
+
+const std::unordered_map<std::string, double> oddsForAllMaps = {
+    {"StereoMadness", 4.0},
+    {"BackOnTrack", 4.0},
+    {"Polargeist", 4.0},
+    {"DryOut", 4.0},
+    {"BaseAfterBase", 4.0},
+    {"CantLetGo", 4.0},
+    {"Jumper", 4.0},
+    {"TimeMachine", 4.5},
+    {"Cycles", 4.0},
+    {"xStep", 5.0},
+    {"Clutterfunk", 5.0},
+    {"TheoryOfEverything", 5.0},
+    {"ElectromanAdventures", 5.0},
+    {"Clubstep", 6.0},
+    {"Electrodynamix", 6.0},
+    {"HexagonForce", 5.0},
+    {"BlastProcessing", 4.0},
+    {"TheoryOfEverything2", 6.0},
+    {"GeometricalDominator", 5.0},
+    {"Deadlocked", 6.0},
+    {"Fingerdash", 5.0}
 };
 
 std::vector<bool> flyStatesForMap;
@@ -68,6 +94,12 @@ void saveLevel(const char * argv[]) {
     } while (loop);
 }
 
+inline int getlen(const char * str) {
+    const char * pos = strchr(str, ':');
+    if (pos) return pos - str;
+    else return strlen(str);
+}
+
 int main(int argc, const char * argv[]) {
     if (argc < 2) {
         std::cerr << "Usage: " << argv[0] << " <level name|portal types> [save.dbj]\nType \"" << argv[0] << " list\" to list level names\n";
@@ -80,10 +112,13 @@ int main(int argc, const char * argv[]) {
         for (std::pair<std::string, std::vector<bool> > p : flyStatesForAllMaps) std::cout << p.first << ", ";
         std::cout << "\nTo use DashBot with another level, you must supply the portal type list yourself. The string must be a binary string specifying whether the bot should tap (0: cube, ball, UFO, spider) or hold (1: ship, wave, robot?) the mouse. Each digit represents a region between two of either the start of the map, the end of the map, or a portal. For example, Stereo Madness's portal string would be '0101' since it's mode sequence is cube, ship, cube, ship.\n";
         return 0;
-    } else if (flyStatesForAllMaps.find(argv[1]) != flyStatesForAllMaps.end()) 
+    } else if (flyStatesForAllMaps.find(argv[1]) != flyStatesForAllMaps.end()) {
         flyStatesForMap = flyStatesForAllMaps.at(argv[1]);
-    else if (std::all_of(argv[1], argv[1] + strlen(argv[1]), [](char c)->bool{return c == '0' || c == '1';})) 
-        for (int i = 0; i < strlen(argv[1]); i++) flyStatesForMap.push_back(argv[1][i] == '1');
+        MAX_ODDS = oddsForAllMaps.at(argv[1]);
+    } else if (std::all_of(argv[1], argv[1] + getlen(argv[1]), [](char c)->bool{return c == '0' || c == '1';})) {
+        for (int i = 0; argv[1][i] && argv[1][i] != ':'; i++) flyStatesForMap.push_back(argv[1][i] == '1');
+        if (strchr(argv[1], ':')) MAX_ODDS = atof(strchr(argv[1], ':') + 1);
+    }
     else {
         std::cerr << "Usage: " << argv[0] << " <level name|portal types> [save.dbj]\nType \"" << argv[0] << " list\" to list level names\n";
         return 1;
@@ -109,7 +144,7 @@ int main(int argc, const char * argv[]) {
                 bestJumps.insert((n / 5) * 5);
             }
             in.close();
-        } else std::cerr << "Could not open input file, ignore this if you're creating a new save.";
+        } else std::cerr << "Could not open input file, ignore this if you're creating a new save.\n";
     }
     std::default_random_engine rng(std::chrono::system_clock::now().time_since_epoch().count());
     HackIH GD;
@@ -124,7 +159,7 @@ int main(int argc, const char * argv[]) {
         float yPos = GD.Read<float>({ GD.BaseAddress , 0x3222D0 , 0x164, 0x38C, 0xB4, 0x224, 0x680 });
         uint32_t flyState = xPos != lastX ? GD.Read<uint32_t>({ GD.BaseAddress , 0x3222D0 , 0x164 , 0x224 , 0x534 }) : oldFlyState;
         char percentage0 = GD.Read<char>({ GD.BaseAddress , 0x3222D0 , 0x164, 0x404, 0xB4, 0x3C0, 0xE8, 0x8, 0x12C });
-        if ((percentage0 == '1' && GD.Read<char>({ GD.BaseAddress , 0x3222D0 , 0x164, 0x404, 0xB4, 0x3C0, 0xE8, 0x8, 0x12D }) == '0' && GD.Read<char>({ GD.BaseAddress , 0x3222D0 , 0x164, 0x404, 0xB4, 0x3C0, 0xE8, 0x8, 0x12E }) == '0') || (percentage0 == '9' && GD.Read<char>({ GD.BaseAddress , 0x3222D0 , 0x164, 0x404, 0xB4, 0x3C0, 0xE8, 0x8, 0x12D }) == '9')) {
+        if ((percentage0 == '1' && GD.Read<char>({ GD.BaseAddress , 0x3222D0 , 0x164, 0x404, 0xB4, 0x3C0, 0xE8, 0x8, 0x12D }) == '0' && GD.Read<char>({ GD.BaseAddress , 0x3222D0 , 0x164, 0x404, 0xB4, 0x3C0, 0xE8, 0x8, 0x12E }) == '0')) {
             std::cout << "level complete! saving and exiting\n";
             bestFitness = lastX;
             bestJumps = jumps;
@@ -133,7 +168,7 @@ int main(int argc, const char * argv[]) {
             return 0;
         }
         if (flyState != oldFlyState && xPos > lastX) {
-            std::cout << "switched between modes\n";
+            std::cout << "switched between modes (" << flyStatesForMap[currentFlyNum] << " -> " << flyStatesForMap[currentFlyNum+1] << ")\n";
             currentFlyNum++;
             oldFlyState = flyState;
             if (isDown) {

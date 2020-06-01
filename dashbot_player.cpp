@@ -66,6 +66,7 @@ int main(int argc, const char * argv[]) {
             bestJumps.insert((n / 5) * 5);
         }
         in.close();
+        if (type.find(':')) type.erase(type.find(':'));
         if (flyStatesForAllMaps.find(type) != flyStatesForAllMaps.end()) 
             flyStatesForMap = flyStatesForAllMaps.at(type);
         else if (std::all_of(type.begin(), type.end(), [](char c)->bool{return c == '0' || c == '1';})) 
