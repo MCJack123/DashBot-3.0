@@ -15,11 +15,12 @@
 #undef max
 
 double MAX_ODDS = 4.0;
-int FPS = 360;
+int FPS = 60;
+int MAX_ATTEMPTS = 20;
 #define ODDS ((bestLastJump == 0.0 ? (bestFitness / 2.0) : bestLastJump) / bestFitness) / (100.0 / MAX_ODDS) + 0.0001
 
 /*
- * We can now read the mode. as well as some other stuff, with the offset GeometryDash.exe + 3222D0 + 164 + 224 + 638.
+ * We can now read the mode, as well as some other stuff, with the offset GeometryDash.exe + 3222D0 + 164 + 224 + 638.
  * This is an "array" of booleans with the contents:
  * [0]: Is ship?
  * [1]: Is UFO? (interesting that it's earlier than ball, since UFO is newer)
@@ -106,7 +107,7 @@ const std::unordered_map<std::string, double> oddsForAllMaps = {
 
 double bestFitness = 1;
 double bestFitnessR = 0;
-std::set<uint32_t> bestJumps;
+std::list<uint32_t> bestJumps;
 double bestLastJump = 1;
 int failCount = 0;
 float lastX = 0;
@@ -114,6 +115,20 @@ std::ofstream out;
 bool saving = false;
 bool isDown = false;
 Mode mode = Mode::cube;
+
+void jump(const HackIH& GD, HWND window, bool state) {
+    /*GD.Write<bool>({GD.BaseAddress, 0x3222D0, 0x164, 0x224, 0x611}, state);
+    GD.Write<bool>({GD.BaseAddress, 0x3222D0, 0x164, 0x224, 0x612}, state);
+    if (!state) GD.Write<bool>({GD.BaseAddress, 0x3222D0, 0x164, 0x224, 0x641}, state);
+    if (GD.Read<bool>({GD.BaseAddress, 0x3222D0, 0x164, 0x228, 0x685}) || !state) {
+        GD.Write<bool>({GD.BaseAddress, 0x3222D0, 0x164, 0x228, 0x611}, state);
+        GD.Write<bool>({GD.BaseAddress, 0x3222D0, 0x164, 0x228, 0x612}, state);
+        if (!state) GD.Write<bool>({GD.BaseAddress, 0x3222D0, 0x164, 0x228, 0x641}, state);
+    }*/
+    if (state) PostMessage(window, WM_LBUTTONDOWN, MK_LBUTTON, 0);
+    else PostMessage(window, WM_LBUTTONUP, 0, 0);
+    Sleep(75);
+}
 
 void saveLevel(const char * argv[]) {
     if (!saving) return;
@@ -147,11 +162,11 @@ int main(int argc, const char * argv[]) {
         } else if (std::all_of(argv[1], argv[1] + strlen(argv[1]), [](char c)->bool{return isdigit(c) || c == '.';})) {
             MAX_ODDS = atof(argv[1]);
         } else {
-            std::cerr << "Usage: " << argv[0] << " [level name|jump speed] [save.dbj]\nType \"" << argv[0] << " list\" to list level names\n";
+            std::cerr << "Usage: " << argv[0] << " [level name|jump speed] [save.dbj] [fps]\nType \"" << argv[0] << " list\" to list level names\n";
             return 1;
         }
     }
-    std::cout << "DashBot v3.1\nBased on Pizzabot-v4 by Pizzaroot\n";
+    std::cout << "DashBot v3.2\nBased on Pizzabot-v4 by Pizzaroot\n";
     if (argc > 2) {
         saving = true;
         // file format:
@@ -169,74 +184,104 @@ int main(int argc, const char * argv[]) {
             while (!in.eof()) {
                 in.read((char*)&n, 4);
                 if (!n) break;
-                bestJumps.insert((n / 5) * 5);
+                bestJumps.push_back(n);
             }
             in.close();
         } else std::cerr << "Could not open input file, ignore this if you're creating a new save.\n";
     }
+    if (argc > 3) {
+        FPS = std::stoi(argv[3]);
+    }
     std::default_random_engine rng(std::chrono::system_clock::now().time_since_epoch().count());
     HackIH GD;
     GD.bind("GeometryDash.exe");
-    std::set<uint32_t> jumps;
+    //std::list<uint32_t> jumps;
+    std::list<uint32_t> newJumps;
+    std::list<uint32_t>::iterator nextJump = bestJumps.begin();
     double lastJump = 0;
     bool randing = false;
     std::list<uint32_t> lastDeathPositions;
     float globalOffset = 0.0;
     float offsetDelta = 2.0;
     float lastY = 0.0;
+    int attempt = 0;
+    HWND window = FindWindow(NULL, "Geometry Dash");
+    if (window == NULL) {
+        std::cerr << "Could not find Geometry Dash window.\n";
+        return 3;
+    }
     /* === desync debugging === //
     float globalDesync = 0.0;
     RegisterHotKey(NULL, 1, MOD_CONTROL, VK_ADD);
     RegisterHotKey(NULL, 2, MOD_CONTROL, VK_SUBTRACT);
     // ======================== */
+    RegisterHotKey(NULL, 3, MOD_CONTROL, VK_BACK);
     while (true) {
-        /* === desync debugging === //
+        float xPos = GD.Read<float>({ GD.BaseAddress , 0x3222D0 , 0x164, 0x224, 0x67C }) + globalOffset /*+ globalDesync*/; // === desync debugging ===
+        if (xPos == lastX) continue;
+        if (bestFitness > 100000) bestFitness = 1; // this may break very long levels
+        //* === desync debugging === //
         MSG message;
         if (PeekMessage(&message, NULL, WM_HOTKEY, WM_HOTKEY, PM_REMOVE)) {
-            if (message.wParam == 1) {globalDesync += 1.0; std::cout << "simulating desync by +1.0 (now " << globalDesync << ")\n";}
-            else if (message.wParam == 2) {globalDesync -= 1.0; std::cout << "simulating desync by -1.0 (now " << globalDesync << ")\n";}
+            //if (message.wParam == 1) {globalDesync += 1.0; std::cout << "simulating desync by +1.0 (now " << globalDesync << ")\n";}
+            //else if (message.wParam == 2) {globalDesync -= 1.0; std::cout << "simulating desync by -1.0 (now " << globalDesync << ")\n";}
+            if (message.wParam == 3) {
+                std::cout << "removing last jump from jump list\n";
+                bestJumps.pop_back();
+                if (bestJumps.empty()) bestLastJump = 1;
+                else bestLastJump = bestJumps.back();
+                bestFitnessR = bestFitness;
+                bestFitness = bestLastJump;
+                failCount = 0;
+                //globalOffset = 0.0;
+                offsetDelta = 2.0;
+                saveLevel(argv);
+                std::cout << "best fitness is now " << bestFitness << "\n";
+            }
         }
         // ======================== */
         bool shouldJump = false;
-        float xPos = GD.Read<float>({ GD.BaseAddress , 0x3222D0 , 0x164, 0x224, 0x67C }) + globalOffset /*+ globalDesync*/; // === desync debugging ===
         float yPos = GD.Read<float>({ GD.BaseAddress , 0x3222D0 , 0x164, 0x224, 0x680 });
-        if (xPos != lastX) {
+        //if (xPos != lastX) {
             Mode oldmode = mode;
             mode = toMode(GD.Read<uint32_t>({GD.BaseAddress, 0x3222D0, 0x164, 0x224, 0x63C}), GD.Read<uint32_t>({GD.BaseAddress, 0x3222D0, 0x164, 0x224, 0x638}));
             if (mode != oldmode && xPos > lastX) {
                 std::cout << "switched between modes (" << modeNames[(int)oldmode] << " -> " << modeNames[(int)mode] << ")\n";
                 if (isDown) {
-                    mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
+                    jump(GD, window, false);
                     isDown = false;
                 }
             }
-        }
-        uint32_t percentage_int = GD.Read<uint32_t>({ GD.BaseAddress , 0x3222D0 , 0x164, 0x3C0, 0xE8, 0x8, 0x12C });
+        //}
+        bool canJump = GD.Read<uint8_t>({GD.BaseAddress, 0x3222D0, 0x164, 0x224, 0x640}) || GD.Read<uint8_t>({GD.BaseAddress, 0x3222D0, 0x164, 0x224, 0x66C, 0x20, 0});
+        uint32_t percentage_int = GD.Read<uint32_t>({ GD.BaseAddress , 0x3222D0 , 0x164, 0x3C0, 0x12C });
         char percentage[4] = {percentage_int & 0xFF, (percentage_int >> 8) & 0xFF, (percentage_int >> 16) & 0xFF, (percentage_int >> 24) & 0xFF};
         if (percentage[0] == '1' && percentage[1] == '0' && percentage[2] == '0' && percentage[3] == '%') {
             std::cout << "level complete! saving and exiting\n";
+            for (uint32_t j : newJumps) bestJumps.push_back(j);
             bestFitness = lastX;
-            bestJumps = jumps;
             bestLastJump = lastJump;
             saveLevel(argv);
             return 0;
         }
         if (xPos > lastX && abs(lastX - globalOffset) < 0.5) std::cout << "[research] delta at beginning is " << xPos - lastX << ", offset is " << xPos - globalOffset - 5.0 << "\n";
         if (isDead) {
-            std::cout << "dead (" << lastX << ", " << lastY << ") (";
+            std::cout << "dead (" << lastX << ", " << lastY << ") (fitness " << bestFitness << ") ("; 
             randing = false;
             lastDeathPositions.push_back((uint32_t)lastX);
-            if (lastDeathPositions.size() > 5) lastDeathPositions.pop_front();
+            if (lastDeathPositions.size() > MAX_ATTEMPTS / 2) lastDeathPositions.pop_front();
             if (isDown) {
-                GD.Write<bool>({GD.BaseAddress, 0x3222D0, 0x164, 0x224, 0x611}, false);
-                GD.Write<bool>({GD.BaseAddress, 0x3222D0, 0x164, 0x224, 0x612}, false);
+                jump(GD, window, false);
                 isDown = false;
             }
-            if (lastX > bestFitness && (lastX > bestFitnessR || failCount < 9) && lastY < 2750.0) {
-                std::cout << (10 - failCount /*- (lastX <= bestFitnessR)*/) << " tries until regression)\n" << "best fitness @ " << lastX << " vs. " << bestFitness << "\n";
+            if (lastY >= 2700.0) {
+                std::cout << (MAX_ATTEMPTS - failCount) << " tries until regression)\nnot saving this one since we fell out of bounds\n";
+                if (bestJumps.size() > 0 && (signed)*bestJumps.rbegin() - (signed)xPos <= 1000 && ++failCount >= MAX_ATTEMPTS) goto regress;
+            } else if (lastX > bestFitness && (lastX > bestFitnessR || failCount < 9)) {
+                std::cout << (MAX_ATTEMPTS - failCount /*- (lastX <= bestFitnessR)*/) << " tries until regression)\n" << "best fitness @ " << lastX << " vs. " << bestFitness << "\n";
                 bestFitness = lastX;
                 if (lastX > bestFitnessR) {
-                    bestJumps = jumps;
+                    for (uint32_t j : newJumps) bestJumps.push_back(j);
                     bestLastJump = lastJump;
                     bestFitnessR = 0;
                     failCount = 0;
@@ -245,19 +290,22 @@ int main(int argc, const char * argv[]) {
                     saveLevel(argv);
                 } else {
                     //failCount++;
+                    //if (bestFitness > bestLastJump) bestFitness = bestLastJump;
                     std::cout << "not saving this one since it can be better\n";
                 }
-            } else if ((signed)bestJumps.size() - (signed)jumps.size() <= 10 && ++failCount >= 10 && bestJumps.size() > 0) {
-                std::cout << (10 - failCount) << " tries until regression)\n";
-                if (jumps.size() == 0 && bestJumps.size() >= 5) {
+            } else if (bestJumps.empty()) {
+                std::cout << (MAX_ATTEMPTS - ++failCount) << " tries until regression)\n";
+            } else if (bestJumps.size() > 0 && (signed)*bestJumps.rbegin() - (signed)xPos <= 1000 && ++failCount >= MAX_ATTEMPTS) {
+regress:
+                std::cout << (MAX_ATTEMPTS - failCount) << " tries until regression)\n";
+                /*if (jumps.size() == 0 && bestJumps.size() >= MAX_ATTEMPTS / 2) {
                     std::cerr << "forgot how to play! stopping to prevent data loss\n";
                     return 3;
-                }
+                }*/
                 std::cout << "too many fails, going back\n";
-                uint32_t max = 0, omax = 0;
-                for (uint32_t n : bestJumps) if (n > max) {omax = max; max = n;}
-                bestJumps.erase(max);
-                bestLastJump = omax;
+                bestJumps.pop_back();
+                if (bestJumps.empty()) bestLastJump = 1;
+                else bestLastJump = bestJumps.back();
                 bestFitnessR = bestFitness;
                 bestFitness = bestLastJump;
                 failCount = 0;
@@ -265,8 +313,8 @@ int main(int argc, const char * argv[]) {
                 offsetDelta = 2.0;
                 saveLevel(argv);
             } else if (lastDeathPositions.size() >= 5 && (/*bestFitness < 1000.0 ||*/ lastX < bestFitness - 1000.0) && std::all_of(lastDeathPositions.begin(), lastDeathPositions.end(), [lastDeathPositions](uint32_t val) -> bool {return abs((double)val - (double)lastDeathPositions.front()) < 15.0;})) { // the last 5 deaths were within 15 units of each other
-                std::cout << (10 - failCount) << " tries until regression)\n" << "we're stuck here! ";
-                std::list<uint32_t> lostJumps;
+                std::cout << (MAX_ATTEMPTS - failCount) << " tries until regression)\n" << "we're stuck here! ";
+                /*std::list<uint32_t> lostJumps;
                 for (int i = 0; i < 200; i += 5) {
                     if (bestJumps.find((uint32_t)floor(lastX / 5) * 5 - i) != bestJumps.end() && jumps.find((uint32_t)floor(lastX / 5) * 5 - i) == jumps.end()) {
                         lostJumps.push_back((uint32_t)floor(lastX / 5) * 5 - i);
@@ -284,7 +332,7 @@ int main(int argc, const char * argv[]) {
                     }
                 // adjust offsets if the coordinates desynced
                 } else {
-                    std::cout << "looks like the coordinates got desynced - fixing\n";
+                    / *std::cout << "looks like the coordinates got desynced - fixing\n";
                     if (globalOffset >= offsetDelta * 8.0) {
                         if (offsetDelta <= 0.25) {
                             std::cout << "looks like it's broken for good - trying again, but manual intervention will likely be necessary\n";
@@ -300,42 +348,66 @@ int main(int argc, const char * argv[]) {
                     std::cout << "global offset is now at " << globalOffset << "\n";
                     // don't try to adjust for the next 10 attempts
                     lastDeathPositions.push_back(0);
-                    lastDeathPositions.pop_front();
-                }
+                    lastDeathPositions.pop_front();* /
+                }*/
             } else {
-                std::cout << (10 - failCount) << " tries until regression)\n";
-		        if (lastX > bestFitness && (lastX > bestFitnessR || failCount < 9) && lastY >= 2750.0) std::cout << "not saving this one since we fell out of bounds\n";
+                std::cout << (MAX_ATTEMPTS - failCount) << " tries until regression)\n";
                 //bestFitnessR = 0;
             }
-            jumps.clear();
+            newJumps.clear();
+            nextJump = bestJumps.begin();
             lastJump = 0;
+            shouldJump = false;
+            if (++attempt > 1000) {
+                std::cout << "re-entering level to avoid breaking\nPlease Wait...\n";
+                keybd_event(VK_ESCAPE, 0x01, 0, NULL);
+                Sleep(50);
+                keybd_event(VK_ESCAPE, 0x01, KEYEVENTF_KEYUP, NULL);
+                Sleep(100);
+                keybd_event(VK_ESCAPE, 0x01, 0, NULL);
+                Sleep(50);
+                keybd_event(VK_ESCAPE, 0x01, KEYEVENTF_KEYUP, NULL);
+                Sleep(1500);
+                keybd_event(VK_SPACE, 0x1c, 0, NULL);
+                Sleep(50);
+                keybd_event(VK_SPACE, 0x1c, KEYEVENTF_KEYUP, NULL);
+                Sleep(1000);
+                attempt = 0;
+                globalOffset = 0.0;
+                offsetDelta = 2.0;
+            }
             while (isDead) mode = toMode(GD.Read<uint32_t>({GD.BaseAddress, 0x3222D0, 0x164, 0x224, 0x63C}), GD.Read<uint32_t>({GD.BaseAddress, 0x3222D0, 0x164, 0x224, 0x638}));
+            float oldX = xPos;
+            while (oldX == xPos) xPos = GD.Read<float>({ GD.BaseAddress , 0x3222D0 , 0x164, 0x224, 0x67C }) + globalOffset;
+            lastX = xPos;
             continue;
-        } else if ((uint32_t)floor(xPos / 5) * 5 <= bestLastJump) {
-            if (bestJumps.find((uint32_t)floor(xPos / 5) * 5) != bestJumps.end() && jumps.find((uint32_t)floor(xPos / 5) * 5) == jumps.end())
+        } else if (nextJump != bestJumps.end()) {
+            if (xPos >= *nextJump) {
                 shouldJump = true;
+                nextJump++;
+            }
         } else if (xPos > lastX) {
             if (!randing) {
                 std::cout << "randing after " << bestLastJump << ", odds are " << (ODDS) * 100 << "%\n";
                 randing = true;
             }
             double rnum = ((double)rng() / (double)rng.max());
-            if (rnum < ODDS) shouldJump = true;
+            if (rnum < ODDS && (canJump || isDown)) shouldJump = true;
         }
         if (shouldJump) {
-            std::cout << "clicking" << (modeFlying[(int)mode] ? (isDown ? " off " : " on  ") : " ") << "(" << (uint32_t)floor(xPos / 5) * 5 << ")\n";
-            jumps.insert((uint32_t)floor(xPos / 5) * 5);
-            lastJump = floor(xPos / 5) * 5;
-            if (modeFlying[(int)mode]) {
+            if (randing) {
+                newJumps.push_back(xPos);
+                std::cout << "clicking!";
+            } else std::cout << "clicking";
+            std::cout << (modeFlying[(int)mode] || isDown ? (isDown ? " off " : " on  ") : " ") << "(" << xPos << ")\n";
+            lastJump = xPos;
+            if (modeFlying[(int)mode] || isDown) {
                 isDown = !isDown;
-                GD.Write<bool>({GD.BaseAddress, 0x3222D0, 0x164, 0x224, 0x611}, isDown);
-                GD.Write<bool>({GD.BaseAddress, 0x3222D0, 0x164, 0x224, 0x612}, isDown);
+                jump(GD, window, isDown);
             } else {
-                GD.Write<bool>({GD.BaseAddress, 0x3222D0, 0x164, 0x224, 0x611}, true);
-                GD.Write<bool>({GD.BaseAddress, 0x3222D0, 0x164, 0x224, 0x612}, true);
-                Sleep(75);
-                GD.Write<bool>({GD.BaseAddress, 0x3222D0, 0x164, 0x224, 0x611}, false);
-                GD.Write<bool>({GD.BaseAddress, 0x3222D0, 0x164, 0x224, 0x612}, false);
+                jump(GD, window, true);
+                if (GD.Read<uint8_t>({GD.BaseAddress, 0x3222D0, 0x164, 0x224, 0x641})) isDown = true; // handle hold ring
+                else jump(GD, window, false);
             }
         }
         if (xPos > lastX) lastY = yPos;
