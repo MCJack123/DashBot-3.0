@@ -1,3 +1,5 @@
+# DOES NOT WORK ON GD 2.2. ONLY WORKS ON 2.11. UNSUPPORTED - YOU'RE ON YOUR OWN.
+
 # DashBot 3.0
 Geometry Dash bot to play &amp; finish levels - Now training much faster!
 
